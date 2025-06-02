@@ -1,5 +1,7 @@
-
+#ifdef _WIN32
 #include <windows.h>
+#endif
+#include <string.h>
 #include <vector>
 #include <iostream>
 #include <thread>
@@ -13,6 +15,12 @@ using namespace std::chrono;
 #define Addr_Write_Page0 0x50
 #define Addr_Write_Page1 0x51
 #define Addr_Write_Page2 0x52
+
+// SPI Master can assert SS0O in single mode
+// SS0O and SS1O in dual mode, and
+// SS0O, SS1O, SS2O and SS3O in quad mode.
+#define SLAVE_SELECT(x) (1 << (x))
+
 const int slaveSelectPin = 10;
 
 
@@ -89,14 +97,14 @@ void ListFtUsbDevices()
 
 		if (FT_OK == ftStatus)
 		{
-			std::cout << "Dev: " << iDev << std::endl;
-			std::cout << "  Flags = 0x" << devInfo.Flags << ", " << DeviceFlagToString(devInfo.Flags).c_str() << std::endl;
-			std::cout << "  Type = 0x" << devInfo.Type << std::endl;
-			std::cout << "  ID = 0x" << devInfo.ID << std::endl;
-			std::cout << "  LocId = 0x" << devInfo.LocId << std::endl;
-			std::cout << "  SerialNumber = " << devInfo.SerialNumber << std::endl;
-			std::cout << "  Description = " << devInfo.Description << std::endl;
-			std::cout << "  ftHandle = 0x" << devInfo.ftHandle << std::endl;
+			std::cout << "INFO: Device #" << iDev << ": " << std::endl;
+			std::cout << "        Flags = 0x" << std::hex << devInfo.Flags << ", " << DeviceFlagToString(devInfo.Flags).c_str() << std::endl;
+			std::cout << "        Type = 0x" << std::hex << devInfo.Type << std::endl;
+			std::cout << "        ID = 0x" << std::hex << devInfo.ID << std::endl;
+			std::cout << "        LocId = 0x" << std::hex << devInfo.LocId << std::endl;
+			std::cout << "        SerialNumber = " << devInfo.SerialNumber << std::endl;
+			std::cout << "        Description = " << devInfo.Description << std::endl;
+			std::cout << "        ftHandle = 0x" << std::hex << devInfo.ftHandle << std::endl;
 
 			const std::string desc = devInfo.Description;
 			if (desc == "FT4222" || desc == "FT4222 A")
@@ -111,6 +119,8 @@ int main()
 {
 	uint8_t i;
 	int8_t j;
+	FT4222_Version       ft4222Version;
+
 
 	std::cout << "INFO: Locating FT42222...\n";
 
@@ -123,15 +133,23 @@ int main()
 
 	FT_HANDLE ftHandle = NULL;
 	FT_STATUS ftStatus;
-	ftStatus = FT_OpenEx((PVOID)g_FT4222DevList[0].SerialNumber, FT_OPEN_BY_SERIAL_NUMBER, &ftHandle);
+	ftStatus = FT_OpenEx((PVOID)(uintptr_t)g_FT4222DevList[0].LocId, FT_OPEN_BY_LOCATION, &ftHandle);
 	if (FT_OK != ftStatus)
 	{
 		std::cout << "Open a FT4222 device failed!" << std::endl;
 		return 0;
 	}
 
+	ftStatus = FT4222_GetVersion(ftHandle, &ft4222Version);
+    	if (FT4222_OK != ftStatus)
+    	{
+        	std::cout << "FT4222_GetVersion failed (error " << (int)ftStatus << ")" << std::endl;
+		return 0;
+    	}
 
-	ftStatus = FT4222_SPIMaster_Init(ftHandle, SPI_IO_SINGLE, CLK_DIV_2, CLK_IDLE_LOW, CLK_LEADING, 0x01);
+	std::cout << "INFO: Chip version: 0x" << std::hex << (uint32_t)ft4222Version.chipVersion << ", LibFT4222 version: 0x" << std::hex << (uint32_t)ft4222Version.dllVersion << std::endl;
+
+	ftStatus = FT4222_SPIMaster_Init(ftHandle, SPI_IO_SINGLE, CLK_DIV_2, CLK_IDLE_LOW, CLK_LEADING, SLAVE_SELECT(0));
 	if (FT_OK != ftStatus)
 	{
 		std::cout << "Init FT4222 as SPI master device failed!" << std::endl;
@@ -148,7 +166,7 @@ int main()
 	ftStatus = FT4222_SPIMaster_SetLines(ftHandle, SPI_IO_SINGLE);
 	if (FT_OK != ftStatus)
 	{
-		std::cout << "set spi single line failed!\n";
+		std::cout << "set spi single line failed!" << std::endl;
 		return 0;
 	}
 
@@ -156,7 +174,7 @@ int main()
 
 	while (true)
 	{
-		std::cout << ".";
+		std::cout << "." << std::endl;
 
 		for (j = 0; j < 64; j++)	//BLUE
 		{
@@ -181,58 +199,58 @@ int main()
 			{
 				SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
 			}
-	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-	for (j = 63; j >= 0; j--)
-	{
-		for (i = 2; i < 0xC7; i = i + 3)
-		{
-			SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
 		}
-	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-	for (j = 0; j < 64; j++)	//RED
-	{
-		for (i = 3; i < 0xC7; i = i + 3)
+		for (j = 63; j >= 0; j--)
 		{
-			SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
+			for (i = 2; i < 0xC7; i = i + 3)
+			{
+				SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
+			}
 		}
-	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-	for (j = 63; j >= 0; j--)
-	{
-		for (i = 3; i < 0xC7; i = i + 3)
+		for (j = 0; j < 64; j++)	//RED
 		{
-			SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
+			for (i = 3; i < 0xC7; i = i + 3)
+			{
+				SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
+			}
 		}
-	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-
-	for (j = 0; j < 64; j++)	//WHITE
-	{
-		for (i = 1; i < 0xC7; i++)
+		for (j = 63; j >= 0; j--)
 		{
-			SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
+			for (i = 3; i < 0xC7; i = i + 3)
+			{
+				SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
+			}
 		}
-	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-	for (j = 63; j >= 0; j--)
-	{
-		for (i = 1; i < 0xC7; i++)
+
+		for (j = 0; j < 64; j++)	//WHITE
 		{
-			SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
+			for (i = 1; i < 0xC7; i++)
+			{
+				SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
+			}
 		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+		for (j = 63; j >= 0; j--)
+		{
+			for (i = 1; i < 0xC7; i++)
+			{
+				SPI_WriteByte(ftHandle, Addr_Write_Page0, i, PWM_Gamma64[j]);	//PWM
+			}
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
-}
-
-FT4222_UnInitialize(ftHandle);
-FT_Close(ftHandle);
-
-return 0;
+	
+	FT4222_UnInitialize(ftHandle);
+	FT_Close(ftHandle);
+	
+	return 0;
 }
